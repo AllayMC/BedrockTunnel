@@ -290,7 +290,7 @@ public final class TunnelController {
                         TunnelClientSession tunnelSession = (TunnelClientSession) session;
                         runtime.setDownstreamSession(tunnelSession);
                         tunnelSession.setCodec(runtime.config().codec().codec());
-                        tunnelSession.getPeer().getCodecHelper().setEncodingSettings(EncodingSettings.CLIENT);
+                        tunnelSession.getPeer().getCodecHelper().setEncodingSettings(EncodingSettings.UNLIMITED);
                         applyFallbackCodecState(tunnelSession.getPeer().getCodecHelper());
                         tunnelSession.setPacketHandler(new DownstreamHandshakeHandler(tunnelSession, TunnelController.this, runtime));
                     }
