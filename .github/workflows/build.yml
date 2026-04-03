@@ -61,7 +61,6 @@ jobs:
           body: |
             Automated nightly build from `${{ github.sha }}`.
           name: Nightly Build
-          prerelease: true
           removeArtifacts: true
           replacesArtifacts: true
           tag: nightly
