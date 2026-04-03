@@ -2,6 +2,8 @@
 
 BedrockTunnel is a desktop MITM packet capture tool for Minecraft: Bedrock Edition. It sits between one Bedrock client and one target server, captures traffic in both directions, and provides a desktop UI for inspection and control.
 
+![img.png](img.png)
+
 ## ✨ Features
 
 - 🖥️ A desktop GUI built for live packet inspection
