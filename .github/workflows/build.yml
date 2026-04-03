@@ -9,7 +9,7 @@ on:
       - '**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -42,3 +42,26 @@ jobs:
           name: BedrockTunnel-${{ github.sha }}
           path: build/libs/BedrockTunnel.jar
           if-no-files-found: error
+
+      - name: Move nightly tag to current commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa nightly "${GITHUB_SHA}" -m "Nightly build"
+          git push origin refs/tags/nightly --force
+
+      - name: Publish nightly prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: build/libs/BedrockTunnel.jar
+          body: |
+            Automated nightly build from `${{ github.sha }}`.
+          name: Nightly Build
+          prerelease: true
+          removeArtifacts: true
+          replacesArtifacts: true
+          tag: nightly
