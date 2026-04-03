@@ -56,6 +56,8 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class MainFrame extends JFrame {
+    private static final String ANY_PACKET = "Any";
+
     private final TunnelController controller;
     private final UserSettingsStore settingsStore;
     private final List<SupportedCodec> codecs;
@@ -107,6 +109,8 @@ public final class MainFrame extends JFrame {
     private boolean paused;
     private boolean pausedActionChosen;
     private boolean applyingSettings;
+    private boolean updatingFilterPacketTypeBox;
+    private boolean filterPacketTypeUpdatePending;
     private boolean updatingRulePacketTypeBox;
     private boolean rulePacketTypeUpdatePending;
     private JFrame consoleFrame;
@@ -121,6 +125,8 @@ public final class MainFrame extends JFrame {
         this.codecBox = new JComboBox<>(codecs.toArray(SupportedCodec[]::new));
         this.filterPacketTypeBox = new JComboBox<>(buildPacketChoices(this.packetTypes));
         this.rulePacketTypeBox = new JComboBox<>(this.packetTypes.toArray(String[]::new));
+        stabilizePacketTypeBoxWidth(filterPacketTypeBox);
+        stabilizePacketTypeBoxWidth(rulePacketTypeBox);
 
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         setPreferredSize(new Dimension(1500, 920));
@@ -133,6 +139,7 @@ public final class MainFrame extends JFrame {
         configureFilters();
         configureButtons();
         configureStats();
+        configureFilterPacketTypeBox();
         configureRulePacketTypeBox();
         applySettings(settings);
         applyRules();
@@ -443,6 +450,34 @@ public final class MainFrame extends JFrame {
         });
     }
 
+    private void configureFilterPacketTypeBox() {
+        filterPacketTypeBox.setEditable(true);
+        var editorComponent = filterPacketTypeBox.getEditor().getEditorComponent();
+        if (!(editorComponent instanceof JTextComponent textComponent)) {
+            return;
+        }
+
+        textComponent.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent event) {
+                scheduleFilterPacketTypeChoicesUpdate(textComponent);
+                applyFilters();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent event) {
+                scheduleFilterPacketTypeChoicesUpdate(textComponent);
+                applyFilters();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent event) {
+                scheduleFilterPacketTypeChoicesUpdate(textComponent);
+                applyFilters();
+            }
+        });
+    }
+
     private void configureButtons() {
         startButton.addActionListener(event -> {
             try {
@@ -515,8 +550,10 @@ public final class MainFrame extends JFrame {
                     return false;
                 }
 
-                Object packetType = filterPacketTypeBox.getSelectedItem();
-                if (packetType instanceof String type && !"Any".equals(type) && !type.equals(entry.packet().packetType())) {
+                String packetTypeQuery = selectedFilterPacketType().toLowerCase(Locale.ROOT);
+                if (!packetTypeQuery.isBlank()
+                        && !ANY_PACKET.equalsIgnoreCase(packetTypeQuery)
+                        && !entry.packet().packetType().toLowerCase(Locale.ROOT).contains(packetTypeQuery)) {
                     return false;
                 }
 
@@ -723,6 +760,23 @@ public final class MainFrame extends JFrame {
         panel.add(component, constraints);
     }
 
+    private void stabilizePacketTypeBoxWidth(JComboBox<String> comboBox) {
+        comboBox.setPrototypeDisplayValue(longestPacketType());
+        Dimension size = comboBox.getPreferredSize();
+        comboBox.setPreferredSize(size);
+        comboBox.setMinimumSize(size);
+    }
+
+    private String longestPacketType() {
+        String longest = ANY_PACKET;
+        for (String packetType : packetTypes) {
+            if (packetType.length() > longest.length()) {
+                longest = packetType;
+            }
+        }
+        return longest;
+    }
+
     private void addRule(RuleTableModel tableModel) {
         try {
             String packetType = selectedRulePacketType();
@@ -753,6 +807,55 @@ public final class MainFrame extends JFrame {
             }
         }
         throw new IllegalArgumentException("Unknown packet type: " + query);
+    }
+
+    private String selectedFilterPacketType() {
+        Object item = filterPacketTypeBox.getEditor().getItem();
+        return item == null ? "" : item.toString().trim();
+    }
+
+    private void updateFilterPacketTypeChoices(JTextComponent textComponent) {
+        if (updatingFilterPacketTypeBox) {
+            return;
+        }
+
+        String text = textComponent.getText();
+        String query = text.trim().toLowerCase(Locale.ROOT);
+        var model = new DefaultComboBoxModel<String>();
+        model.addElement(ANY_PACKET);
+        for (String packetType : packetTypes) {
+            if (query.isEmpty() || packetType.toLowerCase(Locale.ROOT).contains(query)) {
+                model.addElement(packetType);
+            }
+        }
+
+        updatingFilterPacketTypeBox = true;
+        try {
+            filterPacketTypeBox.setModel(model);
+            filterPacketTypeBox.setEditable(true);
+            filterPacketTypeBox.getEditor().setItem(text);
+            if (filterPacketTypeBox.getEditor().getEditorComponent() instanceof JTextComponent editorTextComponent) {
+                editorTextComponent.setCaretPosition(text.length());
+            }
+            if (filterPacketTypeBox.isShowing() && textComponent.isFocusOwner() && model.getSize() > 1 && !query.isEmpty()) {
+                filterPacketTypeBox.showPopup();
+            } else {
+                filterPacketTypeBox.hidePopup();
+            }
+        } finally {
+            updatingFilterPacketTypeBox = false;
+        }
+    }
+
+    private void scheduleFilterPacketTypeChoicesUpdate(JTextComponent textComponent) {
+        if (updatingFilterPacketTypeBox || filterPacketTypeUpdatePending) {
+            return;
+        }
+        filterPacketTypeUpdatePending = true;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            filterPacketTypeUpdatePending = false;
+            updateFilterPacketTypeChoices(textComponent);
+        });
     }
 
     private void updateRulePacketTypeChoices(JTextComponent textComponent) {
@@ -800,7 +903,7 @@ public final class MainFrame extends JFrame {
 
     private static String[] buildPacketChoices(List<String> packetTypes) {
         String[] values = new String[packetTypes.size() + 1];
-        values[0] = "Any";
+        values[0] = ANY_PACKET;
         for (int index = 0; index < packetTypes.size(); index++) {
             values[index + 1] = packetTypes.get(index);
         }
