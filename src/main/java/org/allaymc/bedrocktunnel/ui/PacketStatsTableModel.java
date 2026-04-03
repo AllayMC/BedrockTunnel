@@ -27,6 +27,15 @@ final class PacketStatsTableModel extends AbstractTableModel {
     }
 
     @Override
+    public Class<?> getColumnClass(int columnIndex) {
+        return switch (columnIndex) {
+            case 0 -> String.class;
+            case 1, 2, 3 -> Long.class;
+            default -> Object.class;
+        };
+    }
+
+    @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         PacketStatistics.TypeStat row = rows.get(rowIndex);
         return switch (columnIndex) {

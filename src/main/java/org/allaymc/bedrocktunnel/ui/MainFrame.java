@@ -391,7 +391,9 @@ public final class MainFrame extends JFrame {
         counters.add(new JLabel("Breakpoints"));
         counters.add(breakpointCountLabel);
         panel.add(counters, BorderLayout.NORTH);
-        panel.add(new JScrollPane(new JTable(packetStatsTableModel)), BorderLayout.CENTER);
+        JTable statsTable = new JTable(packetStatsTableModel);
+        statsTable.setAutoCreateRowSorter(true);
+        panel.add(new JScrollPane(statsTable), BorderLayout.CENTER);
         return panel;
     }
 
