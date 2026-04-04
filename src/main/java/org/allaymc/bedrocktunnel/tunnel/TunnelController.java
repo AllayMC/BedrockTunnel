@@ -32,6 +32,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.BedrockClientSession;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
+import org.cloudburstmc.protocol.bedrock.codec.v554.Bedrock_v554;
 import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
 import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
@@ -73,6 +74,7 @@ public final class TunnelController {
     private static final Logger LOGGER = LogManager.getLogger(TunnelController.class);
     private static final int FNV1_32_INIT = 0x811c9dc5;
     private static final int FNV1_PRIME_32 = 0x01000193;
+    private static final int REQUEST_NETWORK_SETTINGS_MIN_PROTOCOL = Bedrock_v554.CODEC.getProtocolVersion();
     private static final DefinitionRegistry<BlockDefinition> UNKNOWN_BLOCK_DEFINITIONS = new UnknownBlockDefinitionRegistry();
     private static final DefinitionRegistry<ItemDefinition> UNKNOWN_ITEM_DEFINITIONS = new UnknownItemDefinitionRegistry();
 
@@ -308,9 +310,18 @@ public final class TunnelController {
             throw new IllegalStateException("Downstream session was not initialized");
         }
 
-        RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
-        request.setProtocolVersion(runtime.config().codec().protocolVersion());
-        downstream.sendPacketImmediately(request);
+        if (supportsRequestNetworkSettings(runtime.config().codec().protocolVersion())) {
+            RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
+            request.setProtocolVersion(runtime.config().codec().protocolVersion());
+            downstream.sendPacketImmediately(request);
+            LOGGER.info(
+                    "Connected to downstream {} using {}, requested network settings",
+                    runtime.config().targetLabel(),
+                    runtime.config().codec().displayVersion()
+            );
+        } else {
+            sendDownstreamLogin(downstream, runtime, "legacy protocol without RequestNetworkSettings");
+        }
 
         onEdt(() -> {
             if (frame != null) {
@@ -330,6 +341,26 @@ public final class TunnelController {
                 frame.setLiveMode(true, pausedContext != null, pausedContext != null && pausedContext.decisionMade);
             }
         });
+    }
+
+    static boolean supportsRequestNetworkSettings(int protocolVersion) {
+        return protocolVersion >= REQUEST_NETWORK_SETTINGS_MIN_PROTOCOL;
+    }
+
+    private void sendDownstreamLogin(TunnelClientSession downstream, TunnelRuntime runtime, String reason) {
+        if (!runtime.markDownstreamLoginSent()) {
+            LOGGER.warn("Skipping downstream login for {} because it was already sent", runtime.config().targetLabel());
+            return;
+        }
+        var loginPacket = LoginForgery.forgeLogin(runtime);
+        LOGGER.info(
+                "Sending downstream login to {} using {}: reason={}, loginPayload={}",
+                runtime.config().targetLabel(),
+                runtime.config().codec().displayVersion(),
+                reason,
+                loginPacket.getAuthPayload().getClass().getSimpleName()
+        );
+        downstream.sendPacketImmediately(loginPacket);
     }
 
     private void doStartCapture(TunnelStartConfig config) {

@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 final class TunnelRuntime {
     private final AtomicBoolean stopping = new AtomicBoolean();
+    private final AtomicBoolean downstreamLoginSent = new AtomicBoolean();
     private final String sessionId;
     private final CaptureBundleStore store;
     private final TunnelStartConfig config;
@@ -112,6 +113,10 @@ final class TunnelRuntime {
 
     public boolean isStopping() {
         return stopping.get();
+    }
+
+    public boolean markDownstreamLoginSent() {
+        return downstreamLoginSent.compareAndSet(false, true);
     }
 
     public void stop() {

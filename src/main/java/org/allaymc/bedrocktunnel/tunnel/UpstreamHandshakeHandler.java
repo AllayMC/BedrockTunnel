@@ -32,16 +32,10 @@ public final class UpstreamHandshakeHandler implements BedrockPacketHandler {
 
     @Override
     public PacketSignal handle(RequestNetworkSettingsPacket packet) {
-        int clientProtocol = packet.getProtocolVersion();
-        if (clientProtocol != runtime.config().codec().protocolVersion()) {
-            session.setCodec(BedrockCompat.disconnectCompat(clientProtocol));
-            session.disconnect("BedrockTunnel is configured for v%d / %s, but the client uses v%d."
-                    .formatted(runtime.config().codec().protocolVersion(), runtime.config().codec().displayVersion(), clientProtocol), false);
+        if (!prepareForConfiguredProtocol(packet.getProtocolVersion())) {
             return PacketSignal.HANDLED;
         }
 
-        session.setCodec(runtime.config().codec().codec());
-        TunnelController.applyFallbackCodecState(session.getPeer().getCodecHelper());
         NetworkSettingsPacket networkSettings = new NetworkSettingsPacket();
         networkSettings.setCompressionThreshold(0);
         networkSettings.setCompressionAlgorithm(PacketCompressionAlgorithm.ZLIB);
@@ -57,6 +51,10 @@ public final class UpstreamHandshakeHandler implements BedrockPacketHandler {
     @Override
     public PacketSignal handle(LoginPacket packet) {
         try {
+            if (!TunnelController.supportsRequestNetworkSettings(runtime.config().codec().protocolVersion())
+                    && !prepareForConfiguredProtocol(packet.getProtocolVersion())) {
+                return PacketSignal.HANDLED;
+            }
             ChainValidationResult chain = validateLogin(packet);
             ChainValidationResult.IdentityClaims claims = chain.identityClaims();
 
@@ -84,6 +82,23 @@ public final class UpstreamHandshakeHandler implements BedrockPacketHandler {
             return NetEaseEncryptionUtils.validateChain(chainPayload);
         }
         return EncryptionUtils.validatePayload(packet.getAuthPayload());
+    }
+
+    private boolean prepareForConfiguredProtocol(int clientProtocol) {
+        if (clientProtocol != runtime.config().codec().protocolVersion()) {
+            session.setCodec(BedrockCompat.disconnectCompat(clientProtocol));
+            session.disconnect(protocolMismatchMessage(clientProtocol), false);
+            return false;
+        }
+
+        session.setCodec(runtime.config().codec().codec());
+        TunnelController.applyFallbackCodecState(session.getPeer().getCodecHelper());
+        return true;
+    }
+
+    private String protocolMismatchMessage(int clientProtocol) {
+        return "BedrockTunnel is configured for v%d / %s, but the client uses v%d."
+                .formatted(runtime.config().codec().protocolVersion(), runtime.config().codec().displayVersion(), clientProtocol);
     }
 
     @Override

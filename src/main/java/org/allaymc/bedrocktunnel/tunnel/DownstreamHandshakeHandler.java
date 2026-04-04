@@ -1,7 +1,10 @@
 package org.allaymc.bedrocktunnel.tunnel;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.ClientToServerHandshakePacket;
+import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PacketSignal;
 import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
@@ -19,6 +22,8 @@ import java.util.Base64;
 import java.util.Map;
 
 public final class DownstreamHandshakeHandler implements BedrockPacketHandler {
+    private static final Logger LOGGER = LogManager.getLogger(DownstreamHandshakeHandler.class);
+
     private final TunnelClientSession session;
     private final TunnelController controller;
     private final TunnelRuntime runtime;
@@ -36,7 +41,19 @@ public final class DownstreamHandshakeHandler implements BedrockPacketHandler {
         } else {
             session.setCompression(packet.getCompressionAlgorithm());
         }
-        session.sendPacketImmediately(LoginForgery.forgeLogin(runtime));
+        if (!runtime.markDownstreamLoginSent()) {
+            LOGGER.warn("Ignoring downstream NetworkSettings for {} because login was already sent", runtime.config().targetLabel());
+            return PacketSignal.HANDLED;
+        }
+        LoginPacket loginPacket = LoginForgery.forgeLogin(runtime);
+        LOGGER.info(
+                "Downstream network settings received for {}: compression={}, threshold={}, loginPayload={}",
+                runtime.config().codec().displayVersion(),
+                packet.getCompressionAlgorithm(),
+                packet.getCompressionThreshold(),
+                loginPacket.getAuthPayload().getClass().getSimpleName()
+        );
+        session.sendPacketImmediately(loginPacket);
         return PacketSignal.HANDLED;
     }
 
@@ -55,9 +72,11 @@ public final class DownstreamHandshakeHandler implements BedrockPacketHandler {
             );
             session.enableEncryption(key);
             session.sendPacketImmediately(new ClientToServerHandshakePacket());
+            LOGGER.info("Downstream server handshake completed for {}", runtime.config().targetLabel());
             controller.onTunnelEstablished(runtime);
             return PacketSignal.HANDLED;
         } catch (Exception exception) {
+            LOGGER.error("Unable to establish downstream encryption for {}", runtime.config().targetLabel(), exception);
             session.disconnect("Unable to establish downstream encryption", false);
             return PacketSignal.HANDLED;
         }
