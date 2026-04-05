@@ -149,8 +149,7 @@ public final class MainFrame extends JFrame {
         setPreferredSize(new Dimension(1500, 920));
         setLayout(new BorderLayout(8, 8));
         add(buildTopPanel(), BorderLayout.NORTH);
-        add(buildCenterPanel(), BorderLayout.CENTER);
-        add(buildBottomTabs(), BorderLayout.SOUTH);
+        add(buildMainSplitPane(), BorderLayout.CENTER);
 
         configureCaptureTable();
         configureFilters();
@@ -312,6 +311,17 @@ public final class MainFrame extends JFrame {
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, detailTabs);
         splitPane.setResizeWeight(0.68);
+        return splitPane;
+    }
+
+    private JSplitPane buildMainSplitPane() {
+        JTabbedPane bottomTabs = buildBottomTabs();
+        bottomTabs.setMinimumSize(new Dimension(0, 140));
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, buildCenterPanel(), bottomTabs);
+        splitPane.setResizeWeight(0.72);
+        splitPane.setContinuousLayout(true);
+        splitPane.setBorder(BorderFactory.createEmptyBorder());
         return splitPane;
     }
 
