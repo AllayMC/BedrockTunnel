@@ -16,6 +16,12 @@ import org.allaymc.bedrocktunnel.rules.PacketRule;
 import org.allaymc.bedrocktunnel.rules.RuleSet;
 import org.allaymc.bedrocktunnel.tunnel.TunnelController;
 import org.allaymc.bedrocktunnel.tunnel.TunnelStartConfig;
+import org.exbin.auxiliary.binary_data.array.ByteArrayEditableData;
+import org.exbin.bined.CodeType;
+import org.exbin.bined.EditMode;
+import org.exbin.bined.basic.CodeAreaViewMode;
+import org.exbin.bined.swing.basic.AntialiasingMode;
+import org.exbin.bined.swing.basic.CodeArea;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.fife.ui.rsyntaxtextarea.Theme;
@@ -36,7 +42,6 @@ import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
@@ -52,6 +57,7 @@ import javax.swing.text.JTextComponent;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Image;
@@ -60,7 +66,6 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -71,6 +76,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class MainFrame extends JFrame {
     private static final String ANY_PACKET = "Any";
+    private static final Font DETAIL_FONT = createDetailFont();
 
     private final TunnelController controller;
     private final UserSettingsStore settingsStore;
@@ -81,7 +87,6 @@ public final class MainFrame extends JFrame {
     private final PacketStatsTableModel packetStatsTableModel = new PacketStatsTableModel();
     private final DefaultListModel<HistoryCapture> historyListModel = new DefaultListModel<>();
     private final TableRowSorter<CaptureTableModel> captureSorter = new TableRowSorter<>(captureTableModel);
-    private final Map<Long, String> hexCache = new HashMap<>();
     private final Map<Long, String> keywordHexCache = new ConcurrentHashMap<>();
     private final Timer keywordFilterTimer = new Timer(180, event -> startKeywordSearch());
 
@@ -104,9 +109,9 @@ public final class MainFrame extends JFrame {
     private final JComboBox<String> filterPacketTypeBox;
     private final JTextField filterKeywordField = new JTextField(16);
 
-    private final JTextArea summaryArea = createTextArea();
+    private final RSyntaxTextArea summaryArea = createDetailTextArea(SyntaxConstants.SYNTAX_STYLE_NONE, false);
     private final RSyntaxTextArea jsonArea = createJsonArea();
-    private final JTextArea hexArea = createTextArea();
+    private final CodeArea hexArea = createHexArea();
 
     private final JComboBox<DirectionMatch> ruleDirectionBox = new JComboBox<>(DirectionMatch.values());
     private final JComboBox<RuleTableModel.RuleType> ruleTypeBox = new JComboBox<>(RuleTableModel.RuleType.values());
@@ -182,10 +187,10 @@ public final class MainFrame extends JFrame {
     public void clearEntries() {
         captureTableModel.clear();
         summaryArea.setText("");
+        summaryArea.setCaretPosition(0);
         jsonArea.setText("");
         jsonArea.setCaretPosition(0);
-        hexArea.setText("");
-        hexCache.clear();
+        clearHexArea();
         keywordHexCache.clear();
         resetKeywordSearchState();
         refreshKeywordFilterForCurrentData();
@@ -245,12 +250,12 @@ public final class MainFrame extends JFrame {
         paused = false;
         pausedActionChosen = false;
         captureTableModel.setEntries(entries);
-        hexCache.clear();
         keywordHexCache.clear();
         summaryArea.setText("");
+        summaryArea.setCaretPosition(0);
         jsonArea.setText("");
         jsonArea.setCaretPosition(0);
-        hexArea.setText("");
+        clearHexArea();
         resetKeywordSearchState();
         updateStatistics(statistics);
         setStatusText("Viewing history: " + summary.targetAddress() + " / " + summary.minecraftVersion());
@@ -261,6 +266,19 @@ public final class MainFrame extends JFrame {
     public void showError(String message, Throwable throwable) {
         String detail = throwable == null ? message : message + System.lineSeparator() + throwable.getMessage();
         JOptionPane.showMessageDialog(this, detail, "BedrockTunnel", JOptionPane.ERROR_MESSAGE);
+    }
+
+    public void startCaptureFromCurrentSettings() {
+        if (liveMode) {
+            return;
+        }
+        try {
+            TunnelStartConfig config = parseStartConfig();
+            persistSettings();
+            controller.startCapture(config);
+        } catch (RuntimeException exception) {
+            showError("Unable to start capture. Check the connection fields.", exception);
+        }
     }
 
     private JPanel buildTopPanel() {
@@ -313,7 +331,7 @@ public final class MainFrame extends JFrame {
         JTabbedPane detailTabs = new JTabbedPane();
         detailTabs.addTab("Summary", new JScrollPane(summaryArea));
         detailTabs.addTab("JSON", new JScrollPane(jsonArea));
-        detailTabs.addTab("Hex", new JScrollPane(hexArea));
+        detailTabs.addTab("Hex", hexArea);
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, detailTabs);
         splitPane.setResizeWeight(0.68);
@@ -497,15 +515,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void configureButtons() {
-        startButton.addActionListener(event -> {
-            try {
-                TunnelStartConfig config = parseStartConfig();
-                persistSettings();
-                controller.startCapture(config);
-            } catch (RuntimeException exception) {
-                showError("Unable to start capture. Check the connection fields.", exception);
-            }
-        });
+        startButton.addActionListener(event -> startCaptureFromCurrentSettings());
         stopButton.addActionListener(event -> controller.stopCapture());
         replayButton.addActionListener(event -> controller.replay(selectedEntry()));
         forwardButton.addActionListener(event -> controller.forwardPaused());
@@ -734,19 +744,17 @@ public final class MainFrame extends JFrame {
     private void showEntry(CaptureEntry entry) {
         if (entry == null) {
             summaryArea.setText("");
+            summaryArea.setCaretPosition(0);
             jsonArea.setText("");
             jsonArea.setCaretPosition(0);
-            hexArea.setText("");
+            clearHexArea();
             return;
         }
         summaryArea.setText(PacketFormatter.toSummary(entry));
+        summaryArea.setCaretPosition(0);
         jsonArea.setText(entry.packet().jsonText());
         jsonArea.setCaretPosition(0);
-        hexArea.setText(hexText(entry));
-    }
-
-    private String hexText(CaptureEntry entry) {
-        return hexCache.computeIfAbsent(entry.packet().sequence(), ignored -> PacketFormatter.toHex(entry.packet().rawBytes()));
+        showHex(entry.packet().rawBytes());
     }
 
     private void refreshActionButtons() {
@@ -771,26 +779,51 @@ public final class MainFrame extends JFrame {
         return panel;
     }
 
-    private static JTextArea createTextArea() {
-        JTextArea textArea = new JTextArea();
+    private void clearHexArea() {
+        showHex(new byte[0]);
+    }
+
+    private void showHex(byte[] bytes) {
+        hexArea.setContentData(new ByteArrayEditableData(bytes));
+        hexArea.clearSelection();
+        hexArea.setActiveCaretPosition(0);
+    }
+
+    private static RSyntaxTextArea createDetailTextArea(String syntaxStyle, boolean codeFoldingEnabled) {
+        RSyntaxTextArea textArea = new RSyntaxTextArea();
         textArea.setEditable(false);
-        textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        textArea.setSyntaxEditingStyle(syntaxStyle);
+        textArea.setCodeFoldingEnabled(codeFoldingEnabled);
+        textArea.setAntiAliasingEnabled(true);
+        textArea.setHighlightCurrentLine(false);
+        textArea.setFont(DETAIL_FONT);
+        applyTextAreaTheme(textArea);
         return textArea;
     }
 
     private static RSyntaxTextArea createJsonArea() {
-        RSyntaxTextArea textArea = new RSyntaxTextArea();
-        textArea.setEditable(false);
-        textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
-        textArea.setCodeFoldingEnabled(true);
-        textArea.setAntiAliasingEnabled(true);
-        textArea.setHighlightCurrentLine(false);
-        textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        applyJsonTheme(textArea);
+        RSyntaxTextArea textArea = createDetailTextArea(SyntaxConstants.SYNTAX_STYLE_JSON, true);
+        textArea.setAnimateBracketMatching(false);
         return textArea;
     }
 
-    private static void applyJsonTheme(RSyntaxTextArea textArea) {
+    private static CodeArea createHexArea() {
+        CodeArea codeArea = new CodeArea();
+        codeArea.setEditMode(EditMode.READ_ONLY);
+        codeArea.setViewMode(CodeAreaViewMode.DUAL);
+        codeArea.setCodeType(CodeType.HEXADECIMAL);
+        codeArea.setRowWrapping(org.exbin.bined.RowWrappingMode.NO_WRAPPING);
+        codeArea.setMaxBytesPerRow(16);
+        codeArea.setMinRowPositionLength(8);
+        codeArea.setMaxRowPositionLength(8);
+        codeArea.setAntialiasingMode(AntialiasingMode.AUTO);
+        codeArea.setFont(DETAIL_FONT);
+        codeArea.setCodeFont(DETAIL_FONT);
+        codeArea.setContentData(new ByteArrayEditableData());
+        return codeArea;
+    }
+
+    private static void applyTextAreaTheme(RSyntaxTextArea textArea) {
         try (InputStream inputStream = MainFrame.class.getResourceAsStream("/org/fife/ui/rsyntaxtextarea/themes/dark.xml")) {
             if (inputStream == null) {
                 return;
@@ -798,6 +831,16 @@ public final class MainFrame extends JFrame {
             Theme.load(inputStream).apply(textArea);
         } catch (IOException ignored) {
         }
+    }
+
+    private static Font createDetailFont() {
+        Set<String> availableFonts = new HashSet<>(List.of(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames(Locale.ROOT)));
+        for (String family : List.of("JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Consolas", Font.MONOSPACED)) {
+            if (availableFonts.contains(family)) {
+                return new Font(family, Font.PLAIN, 13);
+            }
+        }
+        return new Font(Font.MONOSPACED, Font.PLAIN, 13);
     }
 
     private static void addField(JPanel panel, GridBagConstraints constraints, int gridX, String label, java.awt.Component component, double weightx) {

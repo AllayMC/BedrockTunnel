@@ -38,31 +38,6 @@ public final class PacketFormatter {
         }
     }
 
-    public static String toHex(byte[] bytes) {
-        StringBuilder builder = new StringBuilder(bytes.length * 4);
-        for (int offset = 0; offset < bytes.length; offset += 16) {
-            builder.append("%08X  ".formatted(offset));
-            int rowEnd = Math.min(offset + 16, bytes.length);
-            for (int index = offset; index < offset + 16; index++) {
-                if (index < rowEnd) {
-                    builder.append("%02X ".formatted(bytes[index] & 0xFF));
-                } else {
-                    builder.append("   ");
-                }
-                if (index == offset + 7) {
-                    builder.append(' ');
-                }
-            }
-            builder.append(" |");
-            for (int index = offset; index < rowEnd; index++) {
-                int value = bytes[index] & 0xFF;
-                builder.append(value >= 32 && value <= 126 ? (char) value : '.');
-            }
-            builder.append('|').append(System.lineSeparator());
-        }
-        return builder.toString();
-    }
-
     public static String toSummary(CaptureEntry entry) {
         CapturedPacket packet = entry.packet();
         return """

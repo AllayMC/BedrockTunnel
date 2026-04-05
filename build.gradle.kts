@@ -29,6 +29,9 @@ dependencies {
     implementation(libs.log4j.slf4j)
     implementation(libs.jose4j)
     implementation(libs.rsyntaxtextarea)
+    implementation(libs.bined.swing)
+    implementation(libs.binary.data)
+    implementation(libs.binary.data.array)
 }
 
 application {

@@ -37,6 +37,7 @@ public final class BedrockTunnelApp {
                 }
             }
             frame.setVisible(true);
+            frame.startCaptureFromCurrentSettings();
         });
     }
 }

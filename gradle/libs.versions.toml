@@ -5,6 +5,8 @@ jackson = "2.18.0"
 log4j = "2.25.3"
 jose4j = "0.9.6"
 rsyntaxtextarea = "3.6.2"
+bined = "0.2.2"
+exbin-auxiliary = "0.2.2"
 
 [libraries]
 protocol = { group = "org.allaymc.protocol", name = "bedrock-connection", version.ref = "protocol" }
@@ -15,6 +17,9 @@ log4j-core = { group = "org.apache.logging.log4j", name = "log4j-core", version.
 log4j-slf4j = { group = "org.apache.logging.log4j", name = "log4j-slf4j2-impl", version.ref = "log4j" }
 jose4j = { group = "org.bitbucket.b_c", name = "jose4j", version.ref = "jose4j" }
 rsyntaxtextarea = { group = "com.fifesoft", name = "rsyntaxtextarea", version.ref = "rsyntaxtextarea" }
+bined-swing = { group = "org.exbin.bined", name = "bined-swing", version.ref = "bined" }
+binary-data = { group = "org.exbin.auxiliary", name = "binary_data", version.ref = "exbin-auxiliary" }
+binary-data-array = { group = "org.exbin.auxiliary", name = "binary_data-array", version.ref = "exbin-auxiliary" }
 
 [plugins]
 shadow = { id = "com.gradleup.shadow", version = "9.4.1" }
