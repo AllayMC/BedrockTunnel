@@ -1,5 +1,6 @@
 package org.allaymc.bedrocktunnel.ui;
 
+import io.netty.buffer.ByteBufUtil;
 import org.allaymc.bedrocktunnel.ConsoleOutput;
 import org.allaymc.bedrocktunnel.UserSettingsStore;
 import org.allaymc.bedrocktunnel.capture.CaptureEntry;
@@ -36,7 +37,9 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
+import javax.swing.SwingWorker;
 import javax.swing.SwingConstants;
+import javax.swing.Timer;
 import javax.swing.WindowConstants;
 import javax.imageio.ImageIO;
 import javax.swing.event.DocumentEvent;
@@ -54,10 +57,13 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class MainFrame extends JFrame {
     private static final String ANY_PACKET = "Any";
@@ -72,6 +78,8 @@ public final class MainFrame extends JFrame {
     private final DefaultListModel<HistoryCapture> historyListModel = new DefaultListModel<>();
     private final TableRowSorter<CaptureTableModel> captureSorter = new TableRowSorter<>(captureTableModel);
     private final Map<Long, String> hexCache = new HashMap<>();
+    private final Map<Long, String> keywordHexCache = new ConcurrentHashMap<>();
+    private final Timer keywordFilterTimer = new Timer(180, event -> startKeywordSearch());
 
     private final JTextField listenHostField = new JTextField("0.0.0.0", 10);
     private final JTextField listenPortField = new JTextField("19134", 6);
@@ -117,6 +125,9 @@ public final class MainFrame extends JFrame {
     private boolean filterPacketTypeUpdatePending;
     private boolean updatingRulePacketTypeBox;
     private boolean rulePacketTypeUpdatePending;
+    private String activeKeyword = "";
+    private Set<Long> keywordMatchSequences = Set.of();
+    private SwingWorker<KeywordSearchResult, Void> keywordSearchWorker;
     private JFrame consoleFrame;
     private Runnable consoleUnsubscribe;
 
@@ -129,6 +140,7 @@ public final class MainFrame extends JFrame {
         this.codecBox = new JComboBox<>(codecs.toArray(SupportedCodec[]::new));
         this.filterPacketTypeBox = new JComboBox<>(buildPacketChoices(this.packetTypes));
         this.rulePacketTypeBox = new JComboBox<>(this.packetTypes.toArray(String[]::new));
+        this.keywordFilterTimer.setRepeats(false);
         stabilizePacketTypeBoxWidth(filterPacketTypeBox);
         stabilizePacketTypeBoxWidth(rulePacketTypeBox);
 
@@ -170,14 +182,19 @@ public final class MainFrame extends JFrame {
         jsonArea.setText("");
         hexArea.setText("");
         hexCache.clear();
+        keywordHexCache.clear();
+        resetKeywordSearchState();
+        refreshKeywordFilterForCurrentData();
     }
 
     public void addEntry(CaptureEntry entry) {
+        updateKeywordMatch(entry);
         captureTableModel.addEntry(entry);
         refreshActionButtons();
     }
 
     public void updateEntry(CaptureEntry entry) {
+        updateKeywordMatch(entry);
         captureTableModel.updateEntry(entry);
         if (selectedEntry() != null && selectedEntry().packet().sequence() == entry.packet().sequence()) {
             showEntry(entry);
@@ -225,11 +242,14 @@ public final class MainFrame extends JFrame {
         pausedActionChosen = false;
         captureTableModel.setEntries(entries);
         hexCache.clear();
+        keywordHexCache.clear();
         summaryArea.setText("");
         jsonArea.setText("");
         hexArea.setText("");
+        resetKeywordSearchState();
         updateStatistics(statistics);
         setStatusText("Viewing history: " + summary.targetAddress() + " / " + summary.minecraftVersion());
+        refreshKeywordFilterForCurrentData();
         refreshActionButtons();
     }
 
@@ -417,17 +437,17 @@ public final class MainFrame extends JFrame {
         filterKeywordField.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent event) {
-                applyFilters();
+                handleKeywordFilterChanged();
             }
 
             @Override
             public void removeUpdate(DocumentEvent event) {
-                applyFilters();
+                handleKeywordFilterChanged();
             }
 
             @Override
             public void changedUpdate(DocumentEvent event) {
-                applyFilters();
+                handleKeywordFilterChanged();
             }
         });
     }
@@ -511,6 +531,8 @@ public final class MainFrame extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent event) {
+                keywordFilterTimer.stop();
+                cancelKeywordSearch();
                 persistSettings();
                 closeConsoleWindow();
             }
@@ -519,6 +541,9 @@ public final class MainFrame extends JFrame {
 
     private void applyFilters() {
         List<PacketRule> hideRules = ruleTableModel.rulesOfType(RuleTableModel.RuleType.HIDE);
+        String packetTypeQuery = selectedFilterPacketType();
+        String keyword = currentKeyword();
+        boolean keywordReady = !keyword.isBlank() && keyword.equals(activeKeyword);
         captureSorter.setRowFilter(new RowFilter<>() {
             @Override
             public boolean include(Entry<? extends CaptureTableModel, ? extends Integer> row) {
@@ -537,22 +562,19 @@ public final class MainFrame extends JFrame {
                     return false;
                 }
 
-                String packetTypeQuery = selectedFilterPacketType().toLowerCase(Locale.ROOT);
                 if (!packetTypeQuery.isBlank()
                         && !ANY_PACKET.equalsIgnoreCase(packetTypeQuery)
-                        && !entry.packet().packetType().toLowerCase(Locale.ROOT).contains(packetTypeQuery)) {
+                        && !containsIgnoreCase(entry.packet().packetType(), packetTypeQuery)) {
                     return false;
                 }
 
-                String keyword = filterKeywordField.getText().trim().toLowerCase(Locale.ROOT);
                 if (keyword.isBlank()) {
                     return true;
                 }
-
-                return entry.packet().packetType().toLowerCase(Locale.ROOT).contains(keyword)
-                        || entry.packet().description().toLowerCase(Locale.ROOT).contains(keyword)
-                        || entry.packet().jsonText().toLowerCase(Locale.ROOT).contains(keyword)
-                        || hexText(entry).toLowerCase(Locale.ROOT).contains(keyword);
+                if (!keywordReady) {
+                    return true;
+                }
+                return keywordMatchSequences.contains(entry.packet().sequence());
             }
         });
     }
@@ -806,6 +828,152 @@ public final class MainFrame extends JFrame {
         return item == null ? "" : item.toString().trim();
     }
 
+    private void handleKeywordFilterChanged() {
+        if (currentKeyword().isBlank()) {
+            keywordFilterTimer.stop();
+            cancelKeywordSearch();
+            activeKeyword = "";
+            keywordMatchSequences = Set.of();
+            applyFilters();
+            return;
+        }
+        keywordFilterTimer.restart();
+        applyFilters();
+    }
+
+    private void refreshKeywordFilterForCurrentData() {
+        if (currentKeyword().isBlank()) {
+            applyFilters();
+            return;
+        }
+        startKeywordSearch();
+    }
+
+    private void resetKeywordSearchState() {
+        keywordFilterTimer.stop();
+        cancelKeywordSearch();
+        activeKeyword = "";
+        keywordMatchSequences = Set.of();
+    }
+
+    private void startKeywordSearch() {
+        String keyword = currentKeyword();
+        if (keyword.isBlank()) {
+            activeKeyword = "";
+            keywordMatchSequences = Set.of();
+            applyFilters();
+            return;
+        }
+
+        cancelKeywordSearch();
+        List<CaptureEntry> entries = captureTableModel.entriesSnapshot();
+        String normalizedHexKeyword = normalizeHexQuery(keyword);
+
+        keywordSearchWorker = new SwingWorker<>() {
+            @Override
+            protected KeywordSearchResult doInBackground() {
+                Set<Long> matches = new HashSet<>();
+                for (CaptureEntry entry : entries) {
+                    if (isCancelled()) {
+                        return null;
+                    }
+                    if (matchesKeyword(entry, keyword, normalizedHexKeyword)) {
+                        matches.add(entry.packet().sequence());
+                    }
+                }
+                return new KeywordSearchResult(keyword, matches);
+            }
+
+            @Override
+            protected void done() {
+                if (keywordSearchWorker != this) {
+                    return;
+                }
+                keywordSearchWorker = null;
+                if (isCancelled()) {
+                    return;
+                }
+                try {
+                    KeywordSearchResult result = get();
+                    if (result == null || !result.keyword().equals(currentKeyword())) {
+                        return;
+                    }
+                    activeKeyword = result.keyword();
+                    keywordMatchSequences = result.matches();
+                    applyFilters();
+                } catch (Exception ignored) {
+                }
+            }
+        };
+        keywordSearchWorker.execute();
+    }
+
+    private void cancelKeywordSearch() {
+        if (keywordSearchWorker != null) {
+            keywordSearchWorker.cancel(true);
+            keywordSearchWorker = null;
+        }
+    }
+
+    private void updateKeywordMatch(CaptureEntry entry) {
+        String keyword = currentKeyword();
+        if (keyword.isBlank() || !keyword.equals(activeKeyword)) {
+            return;
+        }
+        if (matchesKeyword(entry, keyword, normalizeHexQuery(keyword))) {
+            keywordMatchSequences.add(entry.packet().sequence());
+        } else {
+            keywordMatchSequences.remove(entry.packet().sequence());
+        }
+    }
+
+    private boolean matchesKeyword(CaptureEntry entry, String keyword, String normalizedHexKeyword) {
+        return containsIgnoreCase(entry.packet().packetType(), keyword)
+                || containsIgnoreCase(entry.packet().description(), keyword)
+                || containsIgnoreCase(entry.packet().jsonText(), keyword)
+                || matchesHexKeyword(entry, normalizedHexKeyword);
+    }
+
+    private boolean matchesHexKeyword(CaptureEntry entry, String normalizedHexKeyword) {
+        if (normalizedHexKeyword == null) {
+            return false;
+        }
+        return keywordHexCache.computeIfAbsent(entry.packet().sequence(), ignored -> ByteBufUtil.hexDump(entry.packet().rawBytes()))
+                .contains(normalizedHexKeyword);
+    }
+
+    private String currentKeyword() {
+        return filterKeywordField.getText().trim();
+    }
+
+    private static boolean containsIgnoreCase(String haystack, String needle) {
+        int needleLength = needle.length();
+        int maxIndex = haystack.length() - needleLength;
+        for (int index = 0; index <= maxIndex; index++) {
+            if (haystack.regionMatches(true, index, needle, 0, needleLength)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String normalizeHexQuery(String keyword) {
+        StringBuilder builder = new StringBuilder(keyword.length());
+        for (int index = 0; index < keyword.length(); index++) {
+            char character = keyword.charAt(index);
+            int digit = Character.digit(character, 16);
+            if (digit >= 0) {
+                builder.append(Character.forDigit(digit, 16));
+                continue;
+            }
+            if (Character.isWhitespace(character) || character == '-' || character == ':') {
+                continue;
+            }
+            return null;
+        }
+        return builder.length() >= 2 ? builder.toString() : null;
+    }
+
     private void updateFilterPacketTypeChoices(JTextComponent textComponent) {
         if (updatingFilterPacketTypeBox) {
             return;
@@ -908,6 +1076,9 @@ public final class MainFrame extends JFrame {
         settings.breakpointRules().forEach(rule -> rows.add(new RuleTableModel.RuleRow(RuleTableModel.RuleType.BREAKPOINT, rule)));
         settings.hideRules().forEach(rule -> rows.add(new RuleTableModel.RuleRow(RuleTableModel.RuleType.HIDE, rule)));
         return rows;
+    }
+
+    private record KeywordSearchResult(String keyword, Set<Long> matches) {
     }
 
     private static Image loadWindowIcon() {

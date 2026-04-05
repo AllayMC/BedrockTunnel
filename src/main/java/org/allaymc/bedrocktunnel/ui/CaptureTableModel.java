@@ -76,6 +76,10 @@ final class CaptureTableModel extends AbstractTableModel {
         return entries.get(row);
     }
 
+    public List<CaptureEntry> entriesSnapshot() {
+        return List.copyOf(entries);
+    }
+
     public int indexOf(CaptureEntry entry) {
         for (int index = 0; index < entries.size(); index++) {
             if (entries.get(index).packet().sequence() == entry.packet().sequence()) {
