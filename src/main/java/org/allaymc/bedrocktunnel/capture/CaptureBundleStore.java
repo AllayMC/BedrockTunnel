@@ -1,6 +1,7 @@
 package org.allaymc.bedrocktunnel.capture;
 
 import org.allaymc.bedrocktunnel.BedrockTunnelJson;
+import org.allaymc.bedrocktunnel.BedrockTunnelPaths;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import java.io.IOException;
@@ -67,7 +68,7 @@ public final class CaptureBundleStore {
     }
 
     public static Path rootDirectory() {
-        return Path.of("captures");
+        return BedrockTunnelPaths.capturesDirectory();
     }
 
     public static List<HistoryCapture> listHistory() throws IOException {

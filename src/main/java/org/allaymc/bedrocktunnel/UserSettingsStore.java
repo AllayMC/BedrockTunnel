@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Objects;
 
 public final class UserSettingsStore {
-    private static final Path DEFAULT_PATH = Path.of("settings.json");
+    private static final Path DEFAULT_PATH = BedrockTunnelPaths.settingsFile();
 
     private final Path path;
 

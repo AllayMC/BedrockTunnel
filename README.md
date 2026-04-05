@@ -23,6 +23,14 @@ BedrockTunnel is a desktop MITM packet capture tool for Minecraft: Bedrock Editi
 - Gradle 9.4.1
 - A Bedrock client and target server using the same protocol version selected in the UI
 
+## ⬇️ Downloads
+
+The GitHub `nightly` prerelease includes a Windows app image zip that can be unpacked and launched directly without installing Java separately.
+
+- Download the Windows package from the `Nightly Build` release artifacts
+- Unzip it
+- Run `BedrockTunnel.exe`
+
 ## 🔢 Supported Versions
 
 BedrockTunnel currently supports the following versions:
@@ -110,9 +118,20 @@ Create the fat jar explicitly:
 ./gradlew shadowJar
 ```
 
+Create a Windows app image with a bundled runtime:
+
+```powershell
+./gradlew.bat packageAppImage
+```
+
 The runnable jar is written to:
 
 - `build/libs/BedrockTunnel.jar`
+
+The Windows app image is written to:
+
+- `build/packaging/app-image/BedrockTunnel/`
+- `build/packaging/app-image/BedrockTunnel/BedrockTunnel.exe`
 
 ## ▶️ Run
 
