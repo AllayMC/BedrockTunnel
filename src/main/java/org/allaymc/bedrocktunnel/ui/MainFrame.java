@@ -38,6 +38,7 @@ import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
 import javax.swing.SwingConstants;
 import javax.swing.WindowConstants;
+import javax.imageio.ImageIO;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.TableRowSorter;
@@ -47,13 +48,16 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.Image;
 import java.awt.Insets;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 public final class MainFrame extends JFrame {
     private static final String ANY_PACKET = "Any";
@@ -129,6 +133,7 @@ public final class MainFrame extends JFrame {
         stabilizePacketTypeBoxWidth(rulePacketTypeBox);
 
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setIconImage(loadWindowIcon());
         setPreferredSize(new Dimension(1500, 920));
         setLayout(new BorderLayout(8, 8));
         add(buildTopPanel(), BorderLayout.NORTH);
@@ -649,6 +654,7 @@ public final class MainFrame extends JFrame {
 
         JFrame frame = new JFrame("BedrockTunnel Console");
         frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        frame.setIconImage(getIconImage());
         frame.setLayout(new BorderLayout());
         frame.add(new JScrollPane(consolePanel), BorderLayout.CENTER);
         frame.setSize(1100, 480);
@@ -910,5 +916,16 @@ public final class MainFrame extends JFrame {
             values[index + 1] = packetTypes.get(index);
         }
         return values;
+    }
+
+    private static Image loadWindowIcon() {
+        try {
+            return ImageIO.read(Objects.requireNonNull(
+                    MainFrame.class.getResource("/app-icon.png"),
+                    "Missing app icon resource"
+            ));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to load app icon", exception);
+        }
     }
 }

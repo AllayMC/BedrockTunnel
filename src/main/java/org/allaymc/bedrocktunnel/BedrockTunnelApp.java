@@ -5,6 +5,7 @@ import org.allaymc.bedrocktunnel.codec.CodecRegistry;
 import org.allaymc.bedrocktunnel.tunnel.TunnelController;
 import org.allaymc.bedrocktunnel.ui.MainFrame;
 
+import java.awt.Taskbar;
 import javax.swing.SwingUtilities;
 
 public final class BedrockTunnelApp {
@@ -29,6 +30,12 @@ public final class BedrockTunnelApp {
                     CodecRegistry.packetTypes()
             );
             controller.attachFrame(frame);
+            if (Taskbar.isTaskbarSupported()) {
+                Taskbar taskbar = Taskbar.getTaskbar();
+                if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
+                    taskbar.setIconImage(frame.getIconImage());
+                }
+            }
             frame.setVisible(true);
         });
     }
