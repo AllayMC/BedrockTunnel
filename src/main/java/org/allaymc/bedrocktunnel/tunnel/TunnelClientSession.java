@@ -21,12 +21,12 @@ final class TunnelClientSession extends BedrockClientSession {
         if (packetHandler != null && packetHandler.handlePacket(wrapper.getPacket()) == PacketSignal.HANDLED) {
             return;
         }
-        controller.handlePacket(runtime, FlowDirection.SERVER_TO_CLIENT, wrapper);
+        controller.handlePacket(runtime, this, FlowDirection.SERVER_TO_CLIENT, wrapper);
     }
 
     @Override
     protected void onClose() {
         super.onClose();
-        controller.handleSessionClosed(runtime);
+        controller.handleDownstreamClosed(runtime, this, null);
     }
 }

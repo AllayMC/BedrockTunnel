@@ -169,18 +169,34 @@ public final class TunnelController {
         });
     }
 
-    public void handlePacket(TunnelRuntime runtime, FlowDirection direction, BedrockPacketWrapper wrapper) {
+    public void handlePacket(TunnelRuntime runtime, TunnelServerSession session, FlowDirection direction, BedrockPacketWrapper wrapper) {
+        if (runtime.upstreamSession() != session) {
+            return;
+        }
+        handlePacket(runtime, direction, wrapper);
+    }
+
+    public void handlePacket(TunnelRuntime runtime, TunnelClientSession session, FlowDirection direction, BedrockPacketWrapper wrapper) {
+        if (runtime.downstreamSession() != session) {
+            return;
+        }
+        handlePacket(runtime, direction, wrapper);
+    }
+
+    private void handlePacket(TunnelRuntime runtime, FlowDirection direction, BedrockPacketWrapper wrapper) {
         if (runtime != this.runtime || runtime.isStopping()) {
             return;
         }
 
+        Instant captureStartedAt = runtime.startedAt();
+        CaptureBundleStore captureStore = runtime.store();
         BedrockPacket packet = wrapper.getPacket();
         syncCodecHelperState(runtime, direction, packet);
         byte[] rawBytes = ByteBufUtil.getBytes(wrapper.getPacketBuffer(), wrapper.getPacketBuffer().readerIndex(), wrapper.getPacketBuffer().readableBytes(), false);
         CapturedPacket capturedPacket = new CapturedPacket(
                 sequenceCounter.incrementAndGet(),
                 Instant.now(),
-                System.currentTimeMillis() - runtime.startedAt().toEpochMilli(),
+                System.currentTimeMillis() - captureStartedAt.toEpochMilli(),
                 direction,
                 wrapper.getPacketId(),
                 packet.getPacketType().name(),
@@ -197,19 +213,19 @@ public final class TunnelController {
         boolean forwardImmediately = false;
 
         synchronized (stateLock) {
-            Path rawPath = runtime.store().rawPathFor(capturedPacket.sequence());
-            Path jsonPath = runtime.store().jsonPathFor(capturedPacket.sequence());
+            Path rawPath = captureStore.rawPathFor(capturedPacket.sequence());
+            Path jsonPath = captureStore.jsonPathFor(capturedPacket.sequence());
 
             if (pausedContext != null) {
-                entry = addEntryLocked(runtime, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.QUEUED, false, true));
+                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.QUEUED, false, true));
                 pausedContext.queuedPackets.addLast(new PendingPacket(entry));
             } else if (ruleSet.isBlocked(capturedPacket)) {
-                entry = addEntryLocked(runtime, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.BLOCKED, false, false));
+                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.BLOCKED, false, false));
             } else if (ruleSet.hitsBreakpoint(capturedPacket)) {
-                entry = addEntryLocked(runtime, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.PAUSED, true, false));
+                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.PAUSED, true, false));
                 pausedContext = new PausedContext(new PendingPacket(entry));
             } else {
-                entry = addEntryLocked(runtime, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.FORWARDED, false, false));
+                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.FORWARDED, false, false));
                 forwardImmediately = true;
             }
         }
@@ -228,23 +244,12 @@ public final class TunnelController {
         }
     }
 
-    public void handleSessionClosed(TunnelRuntime runtime) {
-        if (runtime != this.runtime || runtime.isStopping()) {
-            return;
-        }
-        backgroundExecutor.execute(this::doStopCapture);
+    public void handleUpstreamClosed(TunnelRuntime runtime, TunnelServerSession session, String reason) {
+        backgroundExecutor.execute(() -> doHandleUpstreamClosed(runtime, session, reason));
     }
 
-    public void handleRemoteDisconnect(TunnelRuntime runtime, String reason) {
-        if (runtime != this.runtime || runtime.isStopping()) {
-            return;
-        }
-        onEdt(() -> {
-            if (frame != null) {
-                frame.setStatusText("Disconnected: " + reason);
-            }
-        });
-        backgroundExecutor.execute(this::doStopCapture);
+    public void handleDownstreamClosed(TunnelRuntime runtime, TunnelClientSession session, String reason) {
+        backgroundExecutor.execute(() -> doHandleDownstreamClosed(runtime, session, reason));
     }
 
     public void connectDownstream(TunnelRuntime runtime) {
@@ -433,7 +438,6 @@ public final class TunnelController {
                     .channel();
 
             runtime.setServerChannel(serverChannel);
-            schedulePersist();
             onEdt(() -> {
                 if (frame != null) {
                     frame.clearEntries();
@@ -471,6 +475,44 @@ public final class TunnelController {
             }
         });
         refreshHistoryList();
+    }
+
+    private void doHandleUpstreamClosed(TunnelRuntime runtime, TunnelServerSession session, String reason) {
+        if (runtime != this.runtime || runtime.isStopping() || runtime.upstreamSession() != session) {
+            return;
+        }
+
+        runtime.setUpstreamSession(null);
+        runtime.resetConnectionState();
+
+        TunnelClientSession downstream = runtime.downstreamSession();
+        if (downstream != null) {
+            runtime.setDownstreamSession(null);
+            if (downstream.isConnected()) {
+                downstream.close("Upstream disconnected");
+            }
+        }
+
+        onActiveTunnelClosed(runtime, disconnectMessage("Client", reason));
+    }
+
+    private void doHandleDownstreamClosed(TunnelRuntime runtime, TunnelClientSession session, String reason) {
+        if (runtime != this.runtime || runtime.isStopping() || runtime.downstreamSession() != session) {
+            return;
+        }
+
+        runtime.setDownstreamSession(null);
+        runtime.resetConnectionState();
+
+        TunnelServerSession upstream = runtime.upstreamSession();
+        if (upstream != null) {
+            runtime.setUpstreamSession(null);
+            if (upstream.isConnected()) {
+                upstream.close("Downstream disconnected");
+            }
+        }
+
+        onActiveTunnelClosed(runtime, disconnectMessage("Target", reason));
     }
 
     private void doReplay(CaptureEntry entry) {
@@ -601,8 +643,14 @@ public final class TunnelController {
             return;
         }
 
-        var downstreamHelper = runtime.downstreamSession().getPeer().getCodecHelper();
-        var upstreamHelper = runtime.upstreamSession().getPeer().getCodecHelper();
+        TunnelClientSession downstreamSession = runtime.downstreamSession();
+        TunnelServerSession upstreamSession = runtime.upstreamSession();
+        if (downstreamSession == null || upstreamSession == null) {
+            return;
+        }
+
+        var downstreamHelper = downstreamSession.getPeer().getCodecHelper();
+        var upstreamHelper = upstreamSession.getPeer().getCodecHelper();
 
         if (packet instanceof StartGamePacket startGamePacket) {
             if (startGamePacket.getBlockPalette() != null && !startGamePacket.getBlockPalette().isEmpty()) {
@@ -673,12 +721,12 @@ public final class TunnelController {
         return hash;
     }
 
-    private CaptureEntry addEntryLocked(TunnelRuntime runtime, CaptureEntry entry) {
+    private CaptureEntry addEntryLocked(CaptureBundleStore captureStore, CaptureEntry entry) {
         entries.add(entry);
         statistics.recordNewEntry(entry);
         backgroundExecutor.execute(() -> {
             try {
-                runtime.store().savePacketAssets(entry);
+                captureStore.savePacketAssets(entry);
             } catch (IOException exception) {
                 LOGGER.error("Unable to save packet assets", exception);
             }
@@ -717,9 +765,17 @@ public final class TunnelController {
         if (future != null) {
             future.cancel(false);
         }
+        List<StoredPacketRecord> records = snapshotStoredPackets();
+        if (records.isEmpty()) {
+            persistFuture = null;
+            return;
+        }
+        CaptureBundleStore captureStore = runtime.store();
+        String sessionId = runtime.sessionId();
+        Instant startedAt = runtime.startedAt();
         persistFuture = backgroundExecutor.schedule(() -> {
             try {
-                runtime.store().writeIndex(buildSummary(runtime), snapshotStoredPackets());
+                writeIndex(captureStore, buildSummary(runtime, sessionId, startedAt, null, statistics.snapshot()), snapshotStoredPackets());
             } catch (IOException exception) {
                 LOGGER.error("Unable to persist capture index", exception);
             }
@@ -727,15 +783,25 @@ public final class TunnelController {
     }
 
     private void flushPersistNow(TunnelRuntime runtime) {
+        flushPersistNow(runtime, runtime.store(), runtime.sessionId(), runtime.startedAt(), runtime.isStopping() ? runtime.endedAt() : null);
+    }
+
+    private void flushPersistNow(TunnelRuntime runtime, CaptureBundleStore captureStore, String sessionId, Instant startedAt, Instant endedAt) {
         ScheduledFuture<?> future = persistFuture;
         if (future != null) {
             future.cancel(false);
         }
+        List<StoredPacketRecord> records = snapshotStoredPackets();
+        if (records.isEmpty()) {
+            persistFuture = null;
+            return;
+        }
         try {
-            runtime.store().writeIndex(buildSummary(runtime), snapshotStoredPackets());
+            writeIndex(captureStore, buildSummary(runtime, sessionId, startedAt, endedAt, statistics.snapshot()), records);
         } catch (IOException exception) {
             LOGGER.error("Unable to flush capture index", exception);
         }
+        persistFuture = null;
     }
 
     private List<StoredPacketRecord> snapshotStoredPackets() {
@@ -744,12 +810,16 @@ public final class TunnelController {
         }
     }
 
-    private CaptureSummary buildSummary(TunnelRuntime runtime) {
-        PacketStatistics.Snapshot snapshot = statistics.snapshot();
-        Instant endedAt = runtime.isStopping() ? runtime.endedAt() : null;
+    private CaptureSummary buildSummary(
+            TunnelRuntime runtime,
+            String sessionId,
+            Instant startedAt,
+            Instant endedAt,
+            PacketStatistics.Snapshot snapshot
+    ) {
         return new CaptureSummary(
-                runtime.sessionId(),
-                runtime.startedAt(),
+                sessionId,
+                startedAt,
                 endedAt,
                 runtime.config().listenLabel(),
                 runtime.config().targetLabel(),
@@ -758,6 +828,10 @@ public final class TunnelController {
                 snapshot.totalPackets(),
                 snapshot.totalBytes()
         );
+    }
+
+    private void writeIndex(CaptureBundleStore captureStore, CaptureSummary summary, List<StoredPacketRecord> records) throws IOException {
+        captureStore.writeIndex(summary, records);
     }
 
     private void resolveRemainingPausedPackets() {
@@ -774,6 +848,48 @@ public final class TunnelController {
             statistics.recordStateChange(queuedState, PacketState.DROPPED);
         }
         pausedContext = null;
+    }
+
+    private void onActiveTunnelClosed(TunnelRuntime runtime, String statusText) {
+        resolveRemainingPausedPackets();
+        CaptureBundleStore captureStore = runtime.store();
+        String sessionId = runtime.sessionId();
+        Instant startedAt = runtime.startedAt();
+        Instant endedAt = Instant.now();
+        boolean hasEntries = !snapshotStoredPackets().isEmpty();
+
+        if (hasEntries) {
+            flushPersistNow(runtime, captureStore, sessionId, startedAt, endedAt);
+            refreshHistoryList();
+        } else {
+            ScheduledFuture<?> future = persistFuture;
+            if (future != null) {
+                future.cancel(false);
+            }
+        }
+
+        clearEntries();
+        try {
+            runtime.rotateCapture();
+        } catch (IOException exception) {
+            showError("Unable to prepare the next capture session.", exception);
+            doStopCapture();
+            return;
+        }
+
+        onEdt(() -> {
+            if (frame != null) {
+                frame.setStatusText(statusText);
+                frame.setLiveMode(true, false, false);
+            }
+        });
+    }
+
+    private String disconnectMessage(String side, String reason) {
+        if (reason == null || reason.isBlank()) {
+            return side + " disconnected. Listening for the next client...";
+        }
+        return side + " disconnected: " + reason;
     }
 
     private void onEdt(Runnable runnable) {

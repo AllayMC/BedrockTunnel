@@ -103,6 +103,6 @@ public final class UpstreamHandshakeHandler implements BedrockPacketHandler {
 
     @Override
     public void onDisconnect(String reason) {
-        controller.handleRemoteDisconnect(runtime, reason);
+        controller.handleUpstreamClosed(runtime, session, reason);
     }
 }

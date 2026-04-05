@@ -15,12 +15,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class TunnelRuntime {
     private final AtomicBoolean stopping = new AtomicBoolean();
     private final AtomicBoolean downstreamLoginSent = new AtomicBoolean();
-    private final String sessionId;
-    private final CaptureBundleStore store;
     private final TunnelStartConfig config;
-    private final Instant startedAt = Instant.now();
     private final NioEventLoopGroup eventLoopGroup = new NioEventLoopGroup();
     private final KeyPair proxyKeyPair = EncryptionUtils.createKeyPair();
+    private volatile String sessionId;
+    private volatile CaptureBundleStore store;
+    private volatile Instant startedAt;
     private volatile Instant endedAt;
     private volatile Channel serverChannel;
     private volatile TunnelServerSession upstreamSession;
@@ -31,8 +31,7 @@ final class TunnelRuntime {
 
     TunnelRuntime(TunnelStartConfig config) throws IOException {
         this.config = config;
-        this.sessionId = CaptureBundleStore.sessionIdFor(config.targetHost(), config.targetPort());
-        this.store = new CaptureBundleStore(CaptureBundleStore.rootDirectory(), sessionId);
+        rotateCapture();
     }
 
     public String sessionId() {
@@ -117,6 +116,19 @@ final class TunnelRuntime {
 
     public boolean markDownstreamLoginSent() {
         return downstreamLoginSent.compareAndSet(false, true);
+    }
+
+    public void resetConnectionState() {
+        downstreamLoginSent.set(false);
+        identityData = null;
+        rawIdentityClaims = null;
+        skinJson = null;
+    }
+
+    public void rotateCapture() throws IOException {
+        this.sessionId = CaptureBundleStore.sessionIdFor(config.targetHost(), config.targetPort());
+        this.store = new CaptureBundleStore(CaptureBundleStore.rootDirectory(), sessionId);
+        this.startedAt = Instant.now();
     }
 
     public void stop() {
