@@ -67,8 +67,7 @@ public final class MainFrame extends JFrame {
     private final List<SupportedCodec> codecs;
     private final List<String> packetTypes;
     private final CaptureTableModel captureTableModel = new CaptureTableModel();
-    private final RuleTableModel blockRuleTableModel = new RuleTableModel();
-    private final RuleTableModel breakpointRuleTableModel = new RuleTableModel();
+    private final RuleTableModel ruleTableModel = new RuleTableModel();
     private final PacketStatsTableModel packetStatsTableModel = new PacketStatsTableModel();
     private final DefaultListModel<HistoryCapture> historyListModel = new DefaultListModel<>();
     private final TableRowSorter<CaptureTableModel> captureSorter = new TableRowSorter<>(captureTableModel);
@@ -98,6 +97,7 @@ public final class MainFrame extends JFrame {
     private final JTextArea hexArea = createTextArea();
 
     private final JComboBox<DirectionMatch> ruleDirectionBox = new JComboBox<>(DirectionMatch.values());
+    private final JComboBox<RuleTableModel.RuleType> ruleTypeBox = new JComboBox<>(RuleTableModel.RuleType.values());
     private final JComboBox<String> rulePacketTypeBox;
     private final JComboBox<PacketControlMode> ruleModeBox = new JComboBox<>(PacketControlMode.values());
 
@@ -324,55 +324,30 @@ public final class MainFrame extends JFrame {
         JPanel top = new JPanel();
         top.add(new JLabel("Mode"));
         top.add(ruleModeBox);
+        top.add(new JLabel("Type"));
+        top.add(ruleTypeBox);
         top.add(new JLabel("Direction"));
         top.add(ruleDirectionBox);
         top.add(new JLabel("Packet"));
         top.add(rulePacketTypeBox);
-        JButton addBlockButton = new JButton("Add Block");
-        JButton addBreakpointButton = new JButton("Add Breakpoint");
-        top.add(addBlockButton);
-        top.add(addBreakpointButton);
+        JButton addRuleButton = new JButton("Add Rule");
+        top.add(addRuleButton);
         panel.add(top, BorderLayout.NORTH);
 
-        JTable blockTable = new JTable(blockRuleTableModel);
-        JTable breakpointTable = new JTable(breakpointRuleTableModel);
-        JPanel center = new JPanel(new GridBagLayout());
-        GridBagConstraints constraints = new GridBagConstraints();
-        constraints.insets = new Insets(4, 4, 4, 4);
-        constraints.fill = GridBagConstraints.BOTH;
-        constraints.weightx = 1.0;
-        constraints.weighty = 1.0;
-        constraints.gridx = 0;
-        constraints.gridy = 0;
-        center.add(wrapWithTitle("Block Rules", new JScrollPane(blockTable)), constraints);
-        constraints.gridx = 1;
-        center.add(wrapWithTitle("Breakpoint Rules", new JScrollPane(breakpointTable)), constraints);
-        panel.add(center, BorderLayout.CENTER);
+        JTable ruleTable = new JTable(ruleTableModel);
+        ruleTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        panel.add(new JScrollPane(ruleTable), BorderLayout.CENTER);
 
         JPanel bottom = new JPanel();
-        JButton removeBlockButton = new JButton("Remove Block");
-        JButton removeBreakpointButton = new JButton("Remove Breakpoint");
-        bottom.add(removeBlockButton);
-        bottom.add(removeBreakpointButton);
+        JButton removeRuleButton = new JButton("Remove Selected");
+        bottom.add(removeRuleButton);
         panel.add(bottom, BorderLayout.SOUTH);
 
-        addBlockButton.addActionListener(event -> {
-            addRule(blockRuleTableModel);
-        });
-        addBreakpointButton.addActionListener(event -> {
-            addRule(breakpointRuleTableModel);
-        });
-        removeBlockButton.addActionListener(event -> {
-            int row = blockTable.getSelectedRow();
+        addRuleButton.addActionListener(event -> addRule());
+        removeRuleButton.addActionListener(event -> {
+            int row = ruleTable.getSelectedRow();
             if (row >= 0) {
-                blockRuleTableModel.removeRow(row);
-                applyRules();
-            }
-        });
-        removeBreakpointButton.addActionListener(event -> {
-            int row = breakpointTable.getSelectedRow();
-            if (row >= 0) {
-                breakpointRuleTableModel.removeRow(row);
+                ruleTableModel.removeRow(row);
                 applyRules();
             }
         });
@@ -543,10 +518,15 @@ public final class MainFrame extends JFrame {
     }
 
     private void applyFilters() {
+        List<PacketRule> hideRules = ruleTableModel.rulesOfType(RuleTableModel.RuleType.HIDE);
         captureSorter.setRowFilter(new RowFilter<>() {
             @Override
             public boolean include(Entry<? extends CaptureTableModel, ? extends Integer> row) {
                 CaptureEntry entry = captureTableModel.entryAt(row.getIdentifier());
+                if (hideRules.stream().anyMatch(rule -> rule.matches(entry.packet()))) {
+                    return false;
+                }
+
                 Object direction = filterDirectionBox.getSelectedItem();
                 if (direction instanceof DirectionMatch match && !match.matches(entry.packet().direction())) {
                     return false;
@@ -579,6 +559,7 @@ public final class MainFrame extends JFrame {
 
     private void applyRules() {
         controller.updateRuleSet(currentRuleSet());
+        applyFilters();
         if (!applyingSettings) {
             persistSettings();
         }
@@ -587,8 +568,8 @@ public final class MainFrame extends JFrame {
     private RuleSet currentRuleSet() {
         return new RuleSet(
                 (PacketControlMode) ruleModeBox.getSelectedItem(),
-                blockRuleTableModel.rules(),
-                breakpointRuleTableModel.rules()
+                ruleTableModel.rulesOfType(RuleTableModel.RuleType.BLOCK),
+                ruleTableModel.rulesOfType(RuleTableModel.RuleType.BREAKPOINT)
         );
     }
 
@@ -600,8 +581,7 @@ public final class MainFrame extends JFrame {
             targetHostField.setText(settings.targetHost());
             targetPortField.setText(Integer.toString(settings.targetPort()));
             ruleModeBox.setSelectedItem(settings.controlMode());
-            blockRuleTableModel.setRules(settings.blockRules());
-            breakpointRuleTableModel.setRules(settings.breakpointRules());
+            ruleTableModel.setRules(combineRuleRows(settings));
             codecBox.setSelectedItem(findCodec(settings.selectedCodec()));
         } finally {
             applyingSettings = false;
@@ -623,8 +603,9 @@ public final class MainFrame extends JFrame {
                 parsePortOrDefault(targetPortField.getText(), 19132),
                 new UserSettingsStore.CodecSelection(selectedCodec().protocolVersion(), selectedCodec().netEase()),
                 (PacketControlMode) ruleModeBox.getSelectedItem(),
-                blockRuleTableModel.rules(),
-                breakpointRuleTableModel.rules()
+                ruleTableModel.rulesOfType(RuleTableModel.RuleType.BLOCK),
+                ruleTableModel.rulesOfType(RuleTableModel.RuleType.BREAKPOINT),
+                ruleTableModel.rulesOfType(RuleTableModel.RuleType.HIDE)
         ));
     }
 
@@ -785,10 +766,13 @@ public final class MainFrame extends JFrame {
         return longest;
     }
 
-    private void addRule(RuleTableModel tableModel) {
+    private void addRule() {
         try {
             String packetType = selectedRulePacketType();
-            tableModel.addRule(new PacketRule((DirectionMatch) ruleDirectionBox.getSelectedItem(), packetType));
+            ruleTableModel.addRule(
+                    (RuleTableModel.RuleType) ruleTypeBox.getSelectedItem(),
+                    new PacketRule((DirectionMatch) ruleDirectionBox.getSelectedItem(), packetType)
+            );
             rulePacketTypeBox.getEditor().setItem(packetType);
             applyRules();
         } catch (RuntimeException exception) {
@@ -916,6 +900,14 @@ public final class MainFrame extends JFrame {
             values[index + 1] = packetTypes.get(index);
         }
         return values;
+    }
+
+    private static List<RuleTableModel.RuleRow> combineRuleRows(UserSettingsStore.Settings settings) {
+        List<RuleTableModel.RuleRow> rows = new java.util.ArrayList<>();
+        settings.blockRules().forEach(rule -> rows.add(new RuleTableModel.RuleRow(RuleTableModel.RuleType.BLOCK, rule)));
+        settings.breakpointRules().forEach(rule -> rows.add(new RuleTableModel.RuleRow(RuleTableModel.RuleType.BREAKPOINT, rule)));
+        settings.hideRules().forEach(rule -> rows.add(new RuleTableModel.RuleRow(RuleTableModel.RuleType.HIDE, rule)));
+        return rows;
     }
 
     private static Image loadWindowIcon() {

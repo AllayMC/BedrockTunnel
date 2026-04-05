@@ -78,7 +78,8 @@ public final class UserSettingsStore {
                 codec,
                 loaded.controlMode() == null ? defaults.controlMode() : loaded.controlMode(),
                 loaded.blockRules(),
-                loaded.breakpointRules()
+                loaded.breakpointRules(),
+                loaded.hideRules()
         );
     }
 
@@ -98,7 +99,8 @@ public final class UserSettingsStore {
             CodecSelection selectedCodec,
             PacketControlMode controlMode,
             List<PacketRule> blockRules,
-            List<PacketRule> breakpointRules
+            List<PacketRule> breakpointRules,
+            List<PacketRule> hideRules
     ) {
         public Settings {
             listenHost = listenHost == null || listenHost.isBlank() ? "0.0.0.0" : listenHost;
@@ -108,6 +110,7 @@ public final class UserSettingsStore {
             controlMode = controlMode == null ? PacketControlMode.BLACKLIST : controlMode;
             blockRules = blockRules == null ? List.of() : List.copyOf(blockRules);
             breakpointRules = breakpointRules == null ? List.of() : List.copyOf(breakpointRules);
+            hideRules = hideRules == null ? List.of() : List.copyOf(hideRules);
         }
 
         public static Settings defaults(List<SupportedCodec> codecs) {
@@ -119,6 +122,7 @@ public final class UserSettingsStore {
                     19132,
                     new CodecSelection(codec.protocolVersion(), codec.netEase()),
                     PacketControlMode.BLACKLIST,
+                    List.of(),
                     List.of(),
                     List.of()
             );

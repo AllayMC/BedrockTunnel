@@ -7,9 +7,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class RuleTableModel extends AbstractTableModel {
-    private static final String[] COLUMNS = {"Direction", "Packet Type"};
+    private static final String[] COLUMNS = {"Type", "Direction", "Packet Type"};
 
-    private final List<PacketRule> rules = new ArrayList<>();
+    private final List<RuleRow> rules = new ArrayList<>();
 
     @Override
     public int getRowCount() {
@@ -28,17 +28,22 @@ final class RuleTableModel extends AbstractTableModel {
 
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
-        PacketRule rule = rules.get(rowIndex);
-        return columnIndex == 0 ? rule.direction() : rule.packetType();
+        RuleRow rule = rules.get(rowIndex);
+        return switch (columnIndex) {
+            case 0 -> rule.type();
+            case 1 -> rule.rule().direction();
+            case 2 -> rule.rule().packetType();
+            default -> "";
+        };
     }
 
-    public void addRule(PacketRule rule) {
+    public void addRule(RuleType type, PacketRule rule) {
         int row = rules.size();
-        rules.add(rule);
+        rules.add(new RuleRow(type, rule));
         fireTableRowsInserted(row, row);
     }
 
-    public void setRules(List<PacketRule> rules) {
+    public void setRules(List<RuleRow> rules) {
         this.rules.clear();
         this.rules.addAll(rules);
         fireTableDataChanged();
@@ -52,7 +57,34 @@ final class RuleTableModel extends AbstractTableModel {
         fireTableRowsDeleted(row, row);
     }
 
-    public List<PacketRule> rules() {
+    public List<RuleRow> rows() {
         return List.copyOf(rules);
+    }
+
+    public List<PacketRule> rulesOfType(RuleType type) {
+        return rules.stream()
+                .filter(rule -> rule.type() == type)
+                .map(RuleRow::rule)
+                .toList();
+    }
+
+    enum RuleType {
+        BLOCK("Block"),
+        BREAKPOINT("Breakpoint"),
+        HIDE("Hide");
+
+        private final String displayName;
+
+        RuleType(String displayName) {
+            this.displayName = displayName;
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
+    record RuleRow(RuleType type, PacketRule rule) {
     }
 }

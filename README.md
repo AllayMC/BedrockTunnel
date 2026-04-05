@@ -11,6 +11,7 @@ BedrockTunnel is a desktop MITM packet capture tool for Minecraft: Bedrock Editi
 - 📦 Packet details in `Summary`, `JSON`, and `Hex` views
 - 🔎 Packet filtering by direction, state, type, and keyword
 - 🚫 Packet blocking with blacklist and whitelist modes
+- 🙈 Packet hiding rules for decluttering the live packet list
 - ⏸️ Packet breakpoints with forward, drop, and resume controls
 - 🔁 Basic packet replay during a live session
 - 📊 Traffic statistics and per-packet counts
@@ -163,7 +164,9 @@ Keyword matching checks packet names, summary text, JSON text, and hex text.
 
 - Blocking rules can work in `BLACKLIST` or `WHITELIST` mode
 - Rules currently match by direction and packet type
+- `Hide` rules remove matching packets from the packet list without affecting forwarding
 - Breakpoints pause live traffic when a matching packet appears
+- `Block` rules stop matching packets from being forwarded
 - While paused, you can forward or drop the breakpoint packet, then resume queued traffic
 
 ## 🔁 Replay
