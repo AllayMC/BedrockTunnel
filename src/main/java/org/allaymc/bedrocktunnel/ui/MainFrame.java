@@ -16,6 +16,9 @@ import org.allaymc.bedrocktunnel.rules.PacketRule;
 import org.allaymc.bedrocktunnel.rules.RuleSet;
 import org.allaymc.bedrocktunnel.tunnel.TunnelController;
 import org.allaymc.bedrocktunnel.tunnel.TunnelStartConfig;
+import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
+import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.fife.ui.rsyntaxtextarea.Theme;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -56,6 +59,7 @@ import java.awt.Insets;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -101,7 +105,7 @@ public final class MainFrame extends JFrame {
     private final JTextField filterKeywordField = new JTextField(16);
 
     private final JTextArea summaryArea = createTextArea();
-    private final JTextArea jsonArea = createTextArea();
+    private final RSyntaxTextArea jsonArea = createJsonArea();
     private final JTextArea hexArea = createTextArea();
 
     private final JComboBox<DirectionMatch> ruleDirectionBox = new JComboBox<>(DirectionMatch.values());
@@ -179,6 +183,7 @@ public final class MainFrame extends JFrame {
         captureTableModel.clear();
         summaryArea.setText("");
         jsonArea.setText("");
+        jsonArea.setCaretPosition(0);
         hexArea.setText("");
         hexCache.clear();
         keywordHexCache.clear();
@@ -244,6 +249,7 @@ public final class MainFrame extends JFrame {
         keywordHexCache.clear();
         summaryArea.setText("");
         jsonArea.setText("");
+        jsonArea.setCaretPosition(0);
         hexArea.setText("");
         resetKeywordSearchState();
         updateStatistics(statistics);
@@ -729,11 +735,13 @@ public final class MainFrame extends JFrame {
         if (entry == null) {
             summaryArea.setText("");
             jsonArea.setText("");
+            jsonArea.setCaretPosition(0);
             hexArea.setText("");
             return;
         }
         summaryArea.setText(PacketFormatter.toSummary(entry));
         jsonArea.setText(entry.packet().jsonText());
+        jsonArea.setCaretPosition(0);
         hexArea.setText(hexText(entry));
     }
 
@@ -768,6 +776,28 @@ public final class MainFrame extends JFrame {
         textArea.setEditable(false);
         textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         return textArea;
+    }
+
+    private static RSyntaxTextArea createJsonArea() {
+        RSyntaxTextArea textArea = new RSyntaxTextArea();
+        textArea.setEditable(false);
+        textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
+        textArea.setCodeFoldingEnabled(true);
+        textArea.setAntiAliasingEnabled(true);
+        textArea.setHighlightCurrentLine(false);
+        textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        applyJsonTheme(textArea);
+        return textArea;
+    }
+
+    private static void applyJsonTheme(RSyntaxTextArea textArea) {
+        try (InputStream inputStream = MainFrame.class.getResourceAsStream("/org/fife/ui/rsyntaxtextarea/themes/dark.xml")) {
+            if (inputStream == null) {
+                return;
+            }
+            Theme.load(inputStream).apply(textArea);
+        } catch (IOException ignored) {
+        }
     }
 
     private static void addField(JPanel panel, GridBagConstraints constraints, int gridX, String label, java.awt.Component component, double weightx) {

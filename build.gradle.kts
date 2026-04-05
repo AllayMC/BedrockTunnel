@@ -28,6 +28,7 @@ dependencies {
     implementation(libs.log4j.core)
     implementation(libs.log4j.slf4j)
     implementation(libs.jose4j)
+    implementation(libs.rsyntaxtextarea)
 }
 
 application {
