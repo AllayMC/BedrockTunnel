@@ -1,5 +1,5 @@
 [versions]
-protocol = "1.26.10-R2"
+protocol = "1.26.20-R1"
 flatlaf = "3.7.1"
 jackson = "2.18.0"
 log4j = "2.25.3"

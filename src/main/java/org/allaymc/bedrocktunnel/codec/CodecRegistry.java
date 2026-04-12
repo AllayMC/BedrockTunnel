@@ -64,6 +64,7 @@ import org.cloudburstmc.protocol.bedrock.codec.v860.Bedrock_v860;
 import org.cloudburstmc.protocol.bedrock.codec.v898.Bedrock_v898;
 import org.cloudburstmc.protocol.bedrock.codec.v924.Bedrock_v924;
 import org.cloudburstmc.protocol.bedrock.codec.v944.Bedrock_v944;
+import org.cloudburstmc.protocol.bedrock.codec.v974.Bedrock_v974;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketType;
 
 import java.lang.reflect.Field;
@@ -135,7 +136,8 @@ public final class CodecRegistry {
             supported(Bedrock_v860.CODEC),
             supported(Bedrock_v898.CODEC),
             supported(Bedrock_v924.CODEC),
-            supported(Bedrock_v944.CODEC)
+            supported(Bedrock_v944.CODEC),
+            supported(Bedrock_v974.CODEC)
     );
 
     private static final List<String> PACKET_TYPES = List.of(BedrockPacketType.class.getFields()).stream()
