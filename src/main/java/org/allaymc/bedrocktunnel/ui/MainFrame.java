@@ -268,7 +268,7 @@ public final class MainFrame extends JFrame {
         JOptionPane.showMessageDialog(this, detail, "BedrockTunnel", JOptionPane.ERROR_MESSAGE);
     }
 
-    public void startCaptureFromCurrentSettings() {
+    private void startCaptureFromCurrentSettings() {
         if (liveMode) {
             return;
         }
