@@ -87,7 +87,7 @@ public final class TunnelController {
     private final BedrockPong advertisement = new BedrockPong()
             .edition("MCPE")
             .motd("BedrockTunnel")
-            .playerCount(1)
+            .playerCount(0)
             .maximumPlayerCount(1)
             .subMotd("MITM Packet Tunnel")
             .gameType("Creative")
