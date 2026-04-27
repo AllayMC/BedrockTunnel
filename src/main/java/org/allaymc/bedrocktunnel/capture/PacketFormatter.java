@@ -11,7 +11,19 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class PacketFormatter {
+    private static final int MAX_DESCRIPTION_LENGTH = 4096;
+
     private PacketFormatter() {
+    }
+
+    public static String toDescription(BedrockPacket packet) {
+        String description = packet.toString();
+        if (description.length() <= MAX_DESCRIPTION_LENGTH) {
+            return description;
+        }
+        int omitted = description.length() - MAX_DESCRIPTION_LENGTH;
+        return description.substring(0, MAX_DESCRIPTION_LENGTH)
+                + "\n[truncated " + omitted + " characters; full packet content is available in the JSON tab]";
     }
 
     public static String toJson(BedrockPacket packet) {

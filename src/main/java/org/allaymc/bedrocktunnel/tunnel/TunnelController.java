@@ -66,8 +66,6 @@ import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class TunnelController {
@@ -99,7 +97,6 @@ public final class TunnelController {
     private volatile TunnelRuntime runtime;
     private volatile RuleSet ruleSet = RuleSet.DEFAULT;
     private volatile PacketStatistics statistics = new PacketStatistics();
-    private volatile ScheduledFuture<?> persistFuture;
     private volatile PausedContext pausedContext;
 
     public void attachFrame(MainFrame frame) {
@@ -192,7 +189,7 @@ public final class TunnelController {
         CaptureBundleStore captureStore = runtime.store();
         BedrockPacket packet = wrapper.getPacket();
         syncCodecHelperState(runtime, direction, packet);
-        byte[] rawBytes = ByteBufUtil.getBytes(wrapper.getPacketBuffer(), wrapper.getPacketBuffer().readerIndex(), wrapper.getPacketBuffer().readableBytes(), false);
+        byte[] rawBytes = ByteBufUtil.getBytes(wrapper.getPacketBuffer(), wrapper.getPacketBuffer().readerIndex(), wrapper.getPacketBuffer().readableBytes(), true);
         CapturedPacket capturedPacket = new CapturedPacket(
                 sequenceCounter.incrementAndGet(),
                 Instant.now(),
@@ -204,7 +201,7 @@ public final class TunnelController {
                 wrapper.getSenderSubClientId(),
                 wrapper.getTargetSubClientId(),
                 wrapper.getHeaderLength(),
-                packet.toString(),
+                PacketFormatter.toDescription(packet),
                 PacketFormatter.toJson(packet),
                 rawBytes
         );
@@ -217,15 +214,15 @@ public final class TunnelController {
             Path jsonPath = captureStore.jsonPathFor(capturedPacket.sequence());
 
             if (pausedContext != null) {
-                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.QUEUED, false, true));
+                entry = addEntryLocked(new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.QUEUED, false, true));
                 pausedContext.queuedPackets.addLast(new PendingPacket(entry));
             } else if (ruleSet.isBlocked(capturedPacket)) {
-                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.BLOCKED, false, false));
+                entry = addEntryLocked(new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.BLOCKED, false, false));
             } else if (ruleSet.hitsBreakpoint(capturedPacket)) {
-                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.PAUSED, true, false));
+                entry = addEntryLocked(new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.PAUSED, true, false));
                 pausedContext = new PausedContext(new PendingPacket(entry));
             } else {
-                entry = addEntryLocked(captureStore, new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.FORWARDED, false, false));
+                entry = addEntryLocked(new CaptureEntry(capturedPacket, rawPath, jsonPath, PacketState.FORWARDED, false, false));
                 forwardImmediately = true;
             }
         }
@@ -369,8 +366,10 @@ public final class TunnelController {
     }
 
     private void doStartCapture(TunnelStartConfig config) {
-        if (runtime != null && !runtime.isStopping()) {
-            showError("A live tunnel is already running.", null);
+        if (runtime != null) {
+            showError(runtime.isStopping()
+                    ? "Capture history save failed. Press Stop to retry before starting a new tunnel."
+                    : "A live tunnel is already running.", null);
             return;
         }
 
@@ -462,9 +461,11 @@ public final class TunnelController {
         }
 
         resolveRemainingPausedPackets();
-        flushPersistNow(runtime);
         runtime.stop();
-        flushPersistNow(runtime);
+        if (!flushPersistNow(runtime)) {
+            onSaveFailed("Capture stopped, but history save failed. Fix the problem and press Stop to retry.");
+            return;
+        }
         this.runtime = null;
 
         onEdt(() -> {
@@ -532,7 +533,6 @@ public final class TunnelController {
                 frame.updateStatistics(statistics.snapshot());
             }
         });
-        schedulePersist();
     }
 
     private void doResolvePaused(boolean forward) {
@@ -558,7 +558,6 @@ public final class TunnelController {
                 frame.setPausedEntry(entry, true);
             }
         });
-        schedulePersist();
     }
 
     private void doResumePaused() {
@@ -589,7 +588,6 @@ public final class TunnelController {
                 frame.updateStatistics(statistics.snapshot());
             }
         });
-        schedulePersist();
     }
 
     private void doLoadHistory(HistoryCapture historyCapture) {
@@ -721,23 +719,15 @@ public final class TunnelController {
         return hash;
     }
 
-    private CaptureEntry addEntryLocked(CaptureBundleStore captureStore, CaptureEntry entry) {
+    private CaptureEntry addEntryLocked(CaptureEntry entry) {
         entries.add(entry);
         statistics.recordNewEntry(entry);
-        backgroundExecutor.execute(() -> {
-            try {
-                captureStore.savePacketAssets(entry);
-            } catch (IOException exception) {
-                LOGGER.error("Unable to save packet assets", exception);
-            }
-        });
         onEdt(() -> {
             if (frame != null) {
                 frame.addEntry(entry);
                 frame.updateStatistics(statistics.snapshot());
             }
         });
-        schedulePersist();
         return entry;
     }
 
@@ -755,58 +745,34 @@ public final class TunnelController {
         });
     }
 
-    private void schedulePersist() {
-        TunnelRuntime runtime = this.runtime;
-        if (runtime == null) {
-            return;
-        }
-
-        ScheduledFuture<?> future = persistFuture;
-        if (future != null) {
-            future.cancel(false);
-        }
-        List<StoredPacketRecord> records = snapshotStoredPackets();
-        if (records.isEmpty()) {
-            persistFuture = null;
-            return;
-        }
-        CaptureBundleStore captureStore = runtime.store();
-        String sessionId = runtime.sessionId();
-        Instant startedAt = runtime.startedAt();
-        persistFuture = backgroundExecutor.schedule(() -> {
-            try {
-                writeIndex(captureStore, buildSummary(runtime, sessionId, startedAt, null, statistics.snapshot()), snapshotStoredPackets());
-            } catch (IOException exception) {
-                LOGGER.error("Unable to persist capture index", exception);
-            }
-        }, 500, TimeUnit.MILLISECONDS);
+    private boolean flushPersistNow(TunnelRuntime runtime) {
+        return flushPersistNow(runtime, runtime.store(), runtime.sessionId(), runtime.startedAt(), runtime.isStopping() ? runtime.endedAt() : null);
     }
 
-    private void flushPersistNow(TunnelRuntime runtime) {
-        flushPersistNow(runtime, runtime.store(), runtime.sessionId(), runtime.startedAt(), runtime.isStopping() ? runtime.endedAt() : null);
-    }
-
-    private void flushPersistNow(TunnelRuntime runtime, CaptureBundleStore captureStore, String sessionId, Instant startedAt, Instant endedAt) {
-        ScheduledFuture<?> future = persistFuture;
-        if (future != null) {
-            future.cancel(false);
-        }
+    private boolean flushPersistNow(TunnelRuntime runtime, CaptureBundleStore captureStore, String sessionId, Instant startedAt, Instant endedAt) {
         List<StoredPacketRecord> records = snapshotStoredPackets();
         if (records.isEmpty()) {
-            persistFuture = null;
-            return;
+            return true;
         }
         try {
             writeIndex(captureStore, buildSummary(runtime, sessionId, startedAt, endedAt, statistics.snapshot()), records);
+            return true;
         } catch (IOException exception) {
             LOGGER.error("Unable to flush capture index", exception);
+            showError("Unable to save capture history. Current packets are still loaded.", exception);
+            return false;
         }
-        persistFuture = null;
     }
 
     private List<StoredPacketRecord> snapshotStoredPackets() {
         synchronized (stateLock) {
             return entries.stream().map(StoredPacketRecord::from).toList();
+        }
+    }
+
+    private boolean hasStoredPackets() {
+        synchronized (stateLock) {
+            return !entries.isEmpty();
         }
     }
 
@@ -856,16 +822,15 @@ public final class TunnelController {
         String sessionId = runtime.sessionId();
         Instant startedAt = runtime.startedAt();
         Instant endedAt = Instant.now();
-        boolean hasEntries = !snapshotStoredPackets().isEmpty();
+        boolean hasEntries = hasStoredPackets();
 
         if (hasEntries) {
-            flushPersistNow(runtime, captureStore, sessionId, startedAt, endedAt);
-            refreshHistoryList();
-        } else {
-            ScheduledFuture<?> future = persistFuture;
-            if (future != null) {
-                future.cancel(false);
+            if (!flushPersistNow(runtime, captureStore, sessionId, startedAt, endedAt)) {
+                runtime.stop();
+                onSaveFailed("Target disconnected, but history save failed. Fix the problem and press Stop to retry.");
+                return;
             }
+            refreshHistoryList();
         }
 
         clearEntries();
@@ -881,6 +846,16 @@ public final class TunnelController {
             if (frame != null) {
                 frame.setStatusText(statusText);
                 frame.setLiveMode(true, false, false);
+            }
+        });
+    }
+
+    private void onSaveFailed(String statusText) {
+        onEdt(() -> {
+            if (frame != null) {
+                frame.setStatusText(statusText);
+                frame.setLiveMode(true, false, false);
+                frame.updateStatistics(statistics.snapshot());
             }
         });
     }

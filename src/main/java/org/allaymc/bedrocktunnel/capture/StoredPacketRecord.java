@@ -1,5 +1,8 @@
 package org.allaymc.bedrocktunnel.capture;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record StoredPacketRecord(
         long sequence,
         String capturedAt,
@@ -18,7 +21,9 @@ public record StoredPacketRecord(
         boolean queuedWhilePaused,
         int replayCount,
         String rawPath,
-        String jsonPath
+        String jsonPath,
+        byte[] rawBytes,
+        String jsonText
 ) {
     public static StoredPacketRecord from(CaptureEntry entry) {
         CapturedPacket packet = entry.packet();
@@ -39,8 +44,10 @@ public record StoredPacketRecord(
                 entry.breakpointHit(),
                 entry.queuedWhilePaused(),
                 entry.replayCount(),
-                entry.rawPath().toString().replace('\\', '/'),
-                entry.jsonPath().toString().replace('\\', '/')
+                null,
+                null,
+                packet.rawBytes(),
+                packet.jsonText()
         );
     }
 }
